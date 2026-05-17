@@ -28,11 +28,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POOL_FILE="${SCRIPT_DIR}/bot-pool.json"
 
 # ── Configuration ──────────────────────────────────────────────
-AWS_PROFILE="${AWS_PROFILE:-default}"
+AWS_PROFILE="${AWS_PROFILE:-fergrobot}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
 AVAILABILITY_ZONE="${AZ:-us-east-2a}"
 LIGHTSAIL_BUNDLE="${BUNDLE:-medium_2_0}"  # 4GB RAM, 2 vCPU, 80GB SSD — $20/mo
 LIGHTSAIL_BLUEPRINT="${BLUEPRINT:-ubuntu_22_04}"
+SSH_KEY_NAME="${SSH_KEY_NAME:-realtor-agent-key}"
 TEMPLATE_REPO="${TEMPLATE_REPO:-https://github.com/tacshooter/realtor-agent-template.git}"
 
 # ── Input Validation ───────────────────────────────────────────
@@ -118,6 +119,7 @@ aws lightsail create-instances \
     --availability-zone "$AVAILABILITY_ZONE" \
     --blueprint-id "$LIGHTSAIL_BLUEPRINT" \
     --bundle-id "$LIGHTSAIL_BUNDLE" \
+    --key-pair-name "$SSH_KEY_NAME" \
     --user-data "file://${SCRIPT_DIR}/cloud-init/realtor-bootstrap.sh" \
     --output text > /dev/null
 
@@ -156,9 +158,8 @@ echo "[2/8] Configuring firewall..."
 aws lightsail open-instance-public-ports \
     --profile "$AWS_PROFILE" \
     --instance-name "$INSTANCE_NAME" \
-    --port-info \
-        fromPort=443,toPort=443,protocol=TCP \
-        fromPort=80,toPort=80,protocol=TCP \
+    --port-info fromPort=443,toPort=443,protocol=TCP \
+    --port-info fromPort=80,toPort=80,protocol=TCP \
     --output text > /dev/null
 
 echo "       ✅ Ports 80, 443 open"
@@ -170,7 +171,7 @@ sleep 10
 
 for i in $(seq 1 30); do
     if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-        "admin@${IP}" "test -f /var/lib/cloud/instance/boot-finished" 2>/dev/null; then
+        "ubuntu@${IP}" "test -f /var/lib/cloud/instance/boot-finished" 2>/dev/null; then
         echo "       ✅ Cloud-init complete"
         break
     fi
@@ -187,7 +188,7 @@ REALTOR_EMAIL_ESC=$(echo "$REALTOR_EMAIL" | sed 's/[\/&]/\\&/g')
 TELEGRAM_USERNAME_ESC=$(echo "$TELEGRAM_USERNAME" | sed 's/[\/&]/\\&/g')
 BOT_TOKEN_ESC=$(echo "$BOT_TOKEN" | sed 's/[\/&]/\\&/g')
 
-ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << ENDSSH
+ssh -o StrictHostKeyChecking=no "ubuntu@${IP}" "bash -s" << ENDSSH
 set -euo pipefail
 
 # Clone the template repo (HTTPS — no SSH key needed on instance)
@@ -233,7 +234,7 @@ if [[ -n "$MISSING_KEYS" ]]; then
     echo "       ⚠️  Missing keys:$MISSING_KEYS"
     echo "       Set them in your environment or ~/.hermes/.env and re-provision."
 else
-    ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << ENDENV
+    ssh -o StrictHostKeyChecking=no "ubuntu@${IP}" "bash -s" << ENDENV
 cat > /home/realtor/.hermes/.env << 'EOF'
 # ── Model (OpenRouter) ────────────────────────────────────────
 # Shared key — managed centrally, no realtor signup needed.
@@ -254,7 +255,7 @@ ENDENV
 fi
 
 # ── Continue with Libretto install ─────────────────────────────
-ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << ENDSSH
+ssh -o StrictHostKeyChecking=no "ubuntu@${IP}" "bash -s" << ENDSSH
 set -euo pipefail
 
 cd /opt/realtor-agent
@@ -275,7 +276,7 @@ ENDSSH
 # ── Step 5: Initialize PostgreSQL ─────────────────────────────
 echo "[5/8] Setting up PostgreSQL..."
 
-ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << 'ENDSSH'
+ssh -o StrictHostKeyChecking=no "ubuntu@${IP}" "bash -s" << 'ENDSSH'
 set -euo pipefail
 
 sudo -u postgres psql -d realtor_agent -f /opt/realtor-agent/db/schema.sql
@@ -296,7 +297,7 @@ ENDSSH
 # ── Step 6: Test Libretto Local ───────────────────────────────
 echo "[6/8] Testing Libretto local browser..."
 
-ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << 'ENDSSH'
+ssh -o StrictHostKeyChecking=no "ubuntu@${IP}" "bash -s" << 'ENDSSH'
 set -euo pipefail
 
 cd /opt/realtor-agent
@@ -311,7 +312,7 @@ ENDSSH
 # ── Step 7: Start Hermes Agent ────────────────────────────────
 echo "[7/8] Starting Hermes Agent..."
 
-ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << 'ENDSSH'
+ssh -o StrictHostKeyChecking=no "ubuntu@${IP}" "bash -s" << 'ENDSSH'
 set -euo pipefail
 
 mkdir -p /home/realtor/.hermes
@@ -335,7 +336,7 @@ echo "════════════════════════�
 echo ""
 echo "  Instance:  ${INSTANCE_NAME}"
 echo "  IP:        ${IP}"
-echo "  SSH:       ssh admin@${IP}"
+echo "  SSH:       ssh ubuntu@${IP}"
 echo ""
 echo "  📱 Telegram bot is live. The agent will text ${REALTOR_NAME}"
 echo "     automatically to begin onboarding."
