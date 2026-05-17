@@ -1,13 +1,9 @@
 {
-  "_comment": "Telegram bot token pool for Realtor Assistant. Create new bots via @BotFather on Telegram. When the pool runs low, generate more.",
+  "_comment": "Telegram bot token pool for Realtor Assistant. Create new bots via @BotFather on Telegram.",
   "_how_to_create": "Message @BotFather on Telegram, send /newbot, follow prompts. Paste the token below.",
   "_available": "Currently available (not yet assigned)",
   "_in_use": "Currently assigned to a realtor instance",
-  "available": [
-    "8969657114:AAHnG7vJRnFJPiW4fWtVHhTJiE9sW_5H78w"
-  ],
-  "in_use": {
-    "Stephanie Ferguson": "8969657114:AAHnG7vJRnFJPiW4fWtVHhTJiE9sW_5H78w"
-  },
-  "_instructions": "To add a bot: 1) Chat with @BotFather on Telegram 2) Send /newbot 3) Give it a name like 'Jane Doe Realtor Assistant' 4) Give it a username like @JaneDoeRealtorBot 5) Copy the token and add it to the 'available' array above. To assign: move the token from 'available' to 'in_use' with the realtor's name as key."
+  "available": [],
+  "in_use": {},
+  "_instructions": "NEVER COMMIT REAL TOKENS. Use this file as a template. Actual tokens go in .env on each instance."
 }
