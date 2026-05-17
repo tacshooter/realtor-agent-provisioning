@@ -199,22 +199,43 @@ find . -type f \( -name "*.yaml" -o -name "*.md" -o -name "*.ts" \) \
 find . -type f \( -name "*.yaml" -o -name "*.md" \) \
     -exec sed -i "s/{{BOT_TOKEN}}/${BOT_TOKEN_ESC}/g" {} +
 
-# Create .env template (API keys to be filled in manually)
-cat > /home/realtor/.hermes/.env << 'ENVEOF'
-# ── Required: Web Search / Extract ──────────────────────────────
-# Sign up at https://firecrawl.dev (free tier: 500 credits/mo)
-FIRECRAWL_API_KEY=fc-xxxxxxxxxxxx
+echo "✅ Template cloned and configured"
+ENDSSH
 
-# ── Required: Telegram Bot ──────────────────────────────────────
-# Already configured via config.yaml — no key needed here
+# ── Create .env with shared Firecrawl key ──────────────────────
+echo "[4b/8] Injecting shared API keys..."
 
-# ── Optional: Libretto Cloud (if local browsers get blocked) ────
+if [[ -z "${FIRECRAWL_API_KEY:-}" ]]; then
+    # Try to read from local hermes .env
+    if [[ -f "$HOME/.hermes/.env" ]]; then
+        FIRECRAWL_API_KEY=$(grep FIRECRAWL_API_KEY "$HOME/.hermes/.env" | cut -d= -f2-)
+    fi
+fi
+
+if [[ -z "${FIRECRAWL_API_KEY:-}" ]]; then
+    echo "       ⚠️  FIRECRAWL_API_KEY not set — web_search and web_extract will not work."
+    echo "       Set it in your environment or ~/.hermes/.env and re-provision."
+else
+    ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << ENDENV
+cat > /home/realtor/.hermes/.env << 'EOF'
+# ── Web Search / Extract ──────────────────────────────────────
+# Shared Firecrawl key — managed centrally, no realtor signup needed.
+FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+
+# ── Optional: Libretto Cloud (if local browsers get blocked) ──
 # LIBRETTO_API_KEY=libretto-xxxxxxxxxxxx
-ENVEOF
+EOF
 chown realtor:realtor /home/realtor/.hermes/.env
 chmod 600 /home/realtor/.hermes/.env
+ENDENV
+    echo "       ✅ FIRECRAWL_API_KEY injected"
+fi
 
-echo "✅ Template cloned and configured (⚠️  FIRECRAWL_API_KEY still needs to be set in /home/realtor/.hermes/.env)"
+# ── Continue with Libretto install ─────────────────────────────
+ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << ENDSSH
+set -euo pipefail
+
+cd /opt/realtor-agent
 
 # Install Libretto + Playwright (local only — no cloud)
 npm install
@@ -300,9 +321,7 @@ echo ""
 echo "  📊 Estimated monthly cost: \$20 (Lightsail only)"
 echo "     — Libretto runs locally, no cloud dependency."
 echo ""
-echo  "  ⚠️  FIRECRAWL_API_KEY: Sign up at firecrawl.dev (free tier)"
-echo "     and replace fc-xxxxxxxxxxxx in /home/realtor/.hermes/.env"
-echo "     Without this, web_search and web_extract won't work."
+echo "  🔑 FIRECRAWL_API_KEY: auto-injected from your local ~/.hermes/.env"
 echo ""
 echo "  ⚠️  Libretto Cloud note: Local browsers work from a"
 echo "     Lightsail IP. If the MLS blocks it (Cloudflare, CAPTCHAs),"
