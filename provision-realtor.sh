@@ -199,6 +199,23 @@ find . -type f \( -name "*.yaml" -o -name "*.md" -o -name "*.ts" \) \
 find . -type f \( -name "*.yaml" -o -name "*.md" \) \
     -exec sed -i "s/{{BOT_TOKEN}}/${BOT_TOKEN_ESC}/g" {} +
 
+# Create .env template (API keys to be filled in manually)
+cat > /home/realtor/.hermes/.env << 'ENVEOF'
+# ── Required: Web Search / Extract ──────────────────────────────
+# Sign up at https://firecrawl.dev (free tier: 500 credits/mo)
+FIRECRAWL_API_KEY=fc-xxxxxxxxxxxx
+
+# ── Required: Telegram Bot ──────────────────────────────────────
+# Already configured via config.yaml — no key needed here
+
+# ── Optional: Libretto Cloud (if local browsers get blocked) ────
+# LIBRETTO_API_KEY=libretto-xxxxxxxxxxxx
+ENVEOF
+chown realtor:realtor /home/realtor/.hermes/.env
+chmod 600 /home/realtor/.hermes/.env
+
+echo "✅ Template cloned and configured (⚠️  FIRECRAWL_API_KEY still needs to be set in /home/realtor/.hermes/.env)"
+
 # Install Libretto + Playwright (local only — no cloud)
 npm install
 npx libretto setup --skip-browsers  # Chromium already installed by cloud-init
@@ -282,6 +299,10 @@ echo "     automatically to begin onboarding."
 echo ""
 echo "  📊 Estimated monthly cost: \$20 (Lightsail only)"
 echo "     — Libretto runs locally, no cloud dependency."
+echo ""
+echo  "  ⚠️  FIRECRAWL_API_KEY: Sign up at firecrawl.dev (free tier)"
+echo "     and replace fc-xxxxxxxxxxxx in /home/realtor/.hermes/.env"
+echo "     Without this, web_search and web_extract won't work."
 echo ""
 echo "  ⚠️  Libretto Cloud note: Local browsers work from a"
 echo "     Lightsail IP. If the MLS blocks it (Cloudflare, CAPTCHAs),"
