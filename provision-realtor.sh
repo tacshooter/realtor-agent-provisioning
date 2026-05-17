@@ -202,24 +202,40 @@ find . -type f \( -name "*.yaml" -o -name "*.md" \) \
 echo "✅ Template cloned and configured"
 ENDSSH
 
-# ── Create .env with shared Firecrawl key ──────────────────────
+# ── Create .env with shared API keys ──────────────────────────
 echo "[4b/8] Injecting shared API keys..."
 
+# Firecrawl key
 if [[ -z "${FIRECRAWL_API_KEY:-}" ]]; then
-    # Try to read from local hermes .env
     if [[ -f "$HOME/.hermes/.env" ]]; then
         FIRECRAWL_API_KEY=$(grep FIRECRAWL_API_KEY "$HOME/.hermes/.env" | cut -d= -f2-)
     fi
 fi
 
-if [[ -z "${FIRECRAWL_API_KEY:-}" ]]; then
-    echo "       ⚠️  FIRECRAWL_API_KEY not set — web_search and web_extract will not work."
-    echo "       Set it in your environment or ~/.hermes/.env and re-provision."
+# OpenRouter key
+if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+    if [[ -f "$HOME/.hermes/.env" ]]; then
+        OPENROUTER_API_KEY=$(grep OPENROUTER_API_KEY "$HOME/.hermes/.env" | cut -d= -f2-)
+    fi
+fi
+
+MISSING_KEYS=""
+[[ -z "${FIRECRAWL_API_KEY:-}" ]] && MISSING_KEYS="$MISSING_KEYS FIRECRAWL_API_KEY"
+[[ -z "${OPENROUTER_API_KEY:-}" ]] && MISSING_KEYS="$MISSING_KEYS OPENROUTER_API_KEY"
+
+if [[ -n "$MISSING_KEYS" ]]; then
+    echo "       ⚠️  Missing keys:$MISSING_KEYS"
+    echo "       Set them in your environment or ~/.hermes/.env and re-provision."
 else
     ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << ENDENV
 cat > /home/realtor/.hermes/.env << 'EOF'
-# ── Web Search / Extract ──────────────────────────────────────
-# Shared Firecrawl key — managed centrally, no realtor signup needed.
+# ── Model (OpenRouter) ────────────────────────────────────────
+# Shared key — managed centrally, no realtor signup needed.
+# Model: deepseek/deepseek-v4-flash:free (zero per-token cost)
+OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+
+# ── Web Search / Extract (Firecrawl) ──────────────────────────
+# Shared key — managed centrally, no realtor signup needed.
 FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
 
 # ── Optional: Libretto Cloud (if local browsers get blocked) ──
@@ -228,7 +244,7 @@ EOF
 chown realtor:realtor /home/realtor/.hermes/.env
 chmod 600 /home/realtor/.hermes/.env
 ENDENV
-    echo "       ✅ FIRECRAWL_API_KEY injected"
+    echo "       ✅ OPENROUTER_API_KEY + FIRECRAWL_API_KEY injected"
 fi
 
 # ── Continue with Libretto install ─────────────────────────────
@@ -319,9 +335,12 @@ echo "  📱 Telegram bot is live. The agent will text ${REALTOR_NAME}"
 echo "     automatically to begin onboarding."
 echo ""
 echo "  📊 Estimated monthly cost: \$20 (Lightsail only)"
+echo "     — Model: deepseek/deepseek-v4-flash:free (\$0)"
 echo "     — Libretto runs locally, no cloud dependency."
 echo ""
-echo "  🔑 FIRECRAWL_API_KEY: auto-injected from your local ~/.hermes/.env"
+echo "  🔑 API keys auto-injected from your local ~/.hermes/.env:"
+echo "     — OPENROUTER_API_KEY (model access, free tier)"
+echo "     — FIRECRAWL_API_KEY (web search/extract)"
 echo ""
 echo "  ⚠️  Libretto Cloud note: Local browsers work from a"
 echo "     Lightsail IP. If the MLS blocks it (Cloudflare, CAPTCHAs),"
