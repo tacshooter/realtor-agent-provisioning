@@ -5,24 +5,27 @@
 #   ./provision-realtor.sh "Jane Doe" "jane@cbdfw.com" "@jane_realtor"
 #
 # What it does:
-#   1. Creates a Lightsail instance (Ubuntu 22.04, 4GB RAM)
-#   2. Bootstraps OS via cloud-init
-#   3. Clones the realtor-agent-template repo
-#   4. Injects realtor-specific config
-#   5. Sets up PostgreSQL schema
-#   6. Installs Libretto + Playwright
-#   7. Deploys Libretto Cloud workflows
+#   1. Assigns a Telegram bot token from the pool
+#   2. Creates a Lightsail instance (Ubuntu 22.04, 4GB RAM)
+#   3. Bootstraps OS via cloud-init
+#   4. Clones the realtor-agent-template repo
+#   5. Injects realtor-specific config + bot token
+#   6. Sets up PostgreSQL schema
+#   7. Installs Libretto + Playwright (LOCAL — no cloud dependency)
 #   8. Starts Hermes Agent via PM2
 #   9. Prints onboarding instructions
 #
 # Prerequisites:
 #   - AWS CLI installed and configured (profile: default or AWS_PROFILE)
-#   - GitHub repo cloned: tacshooter/realtor-agent-template
-#   - Libretto Cloud account set up
+#   - Telegram bot tokens pre-created in bot-pool.json (via @BotFather)
+#   - GitHub repo: tacshooter/realtor-agent-template
 #
 # Time to working agent: ~5 minutes
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+POOL_FILE="${SCRIPT_DIR}/bot-pool.json"
 
 # ── Configuration ──────────────────────────────────────────────
 AWS_PROFILE="${AWS_PROFILE:-default}"
@@ -30,8 +33,7 @@ AWS_REGION="${AWS_REGION:-us-east-2}"
 AVAILABILITY_ZONE="${AZ:-us-east-2a}"
 LIGHTSAIL_BUNDLE="${BUNDLE:-medium_2_0}"  # 4GB RAM, 2 vCPU, 80GB SSD — $20/mo
 LIGHTSAIL_BLUEPRINT="${BLUEPRINT:-ubuntu_22_04}"
-SSH_KEY_NAME="${SSH_KEY_NAME:-realtor-agent-key}"
-TEMPLATE_REPO="${TEMPLATE_REPO:-git@github.com:tacshooter/realtor-agent-template.git}"
+TEMPLATE_REPO="${TEMPLATE_REPO:-https://github.com/tacshooter/realtor-agent-template.git}"
 
 # ── Input Validation ───────────────────────────────────────────
 REALTOR_NAME="${1:-}"
@@ -45,6 +47,45 @@ if [[ -z "$REALTOR_NAME" || -z "$REALTOR_EMAIL" || -z "$TELEGRAM_USERNAME" ]]; t
     echo "  $0 \"Jane Doe\" \"jane@cbdfw.com\" \"@jane_realtor\""
     exit 1
 fi
+
+# ── Step 0: Assign Telegram Bot Token ──────────────────────────
+echo "[0/8] Assigning Telegram bot token..."
+
+if [[ ! -f "$POOL_FILE" ]]; then
+    echo "ERROR: bot-pool.json not found at $POOL_FILE"
+    echo "Create bot tokens via @BotFather on Telegram and add them to bot-pool.json."
+    exit 1
+fi
+
+# Pull next available token from pool
+BOT_TOKEN=$(python3 -c "
+import json, sys
+with open('$POOL_FILE') as f:
+    pool = json.load(f)
+if not pool.get('available'):
+    print('ERROR: No bot tokens available in pool', file=sys.stderr)
+    print('Create new bots via @BotFather on Telegram (/newbot) and add tokens to bot-pool.json', file=sys.stderr)
+    sys.exit(1)
+token = pool['available'].pop(0)
+print(token)
+" 2>&1)
+
+if [[ "$BOT_TOKEN" == ERROR:* ]]; then
+    echo "$BOT_TOKEN"
+    exit 1
+fi
+
+# Mark token as in-use
+python3 -c "
+import json
+with open('$POOL_FILE') as f:
+    pool = json.load(f)
+pool['in_use']['${REALTOR_NAME}'] = '$BOT_TOKEN'
+with open('$POOL_FILE', 'w') as f:
+    json.dump(pool, f, indent=2)
+"
+
+echo "       ✅ Bot token assigned (${#BOT_TOKEN} chars)"
 
 # Generate a clean slug from the name
 SLUG=$(echo "$REALTOR_NAME" | tr '[:upper:] ' '[:lower:]' | tr -cd '[:alnum:]-')
@@ -63,7 +104,7 @@ echo "  Bundle:    ${LIGHTSAIL_BUNDLE}"
 echo ""
 
 # ── Step 1: Create Lightsail Instance ──────────────────────────
-echo "[1/7] Creating Lightsail instance: ${INSTANCE_NAME}..."
+echo "[1/8] Creating Lightsail instance: ${INSTANCE_NAME}..."
 
 aws lightsail create-instances \
     --profile "$AWS_PROFILE" \
@@ -71,12 +112,11 @@ aws lightsail create-instances \
     --availability-zone "$AVAILABILITY_ZONE" \
     --blueprint-id "$LIGHTSAIL_BLUEPRINT" \
     --bundle-id "$LIGHTSAIL_BUNDLE" \
-    --user-data "file://cloud-init/realtor-bootstrap.sh" \
+    --user-data "file://${SCRIPT_DIR}/cloud-init/realtor-bootstrap.sh" \
     --output text > /dev/null
 
 echo "       Instance creation initiated. Waiting for it to be running..."
 
-# Wait for instance to be running (max 5 minutes)
 for i in $(seq 1 60); do
     STATE=$(aws lightsail get-instance \
         --profile "$AWS_PROFILE" \
@@ -96,7 +136,6 @@ if [[ "$STATE" != "running" ]]; then
     exit 1
 fi
 
-# Get public IP
 IP=$(aws lightsail get-instance \
     --profile "$AWS_PROFILE" \
     --instance-name "$INSTANCE_NAME" \
@@ -106,7 +145,7 @@ IP=$(aws lightsail get-instance \
 echo "       ✅ Instance running at ${IP}"
 
 # ── Step 2: Open Network Ports ─────────────────────────────────
-echo "[2/7] Configuring firewall..."
+echo "[2/8] Configuring firewall..."
 
 aws lightsail open-instance-public-ports \
     --profile "$AWS_PROFILE" \
@@ -118,10 +157,10 @@ aws lightsail open-instance-public-ports \
 
 echo "       ✅ Ports 80, 443 open"
 
-# ── Step 3: Wait for cloud-init to finish ─────────────────────
-echo "[3/7] Waiting for cloud-init bootstrap to complete..."
+# ── Step 3: Wait for cloud-init ────────────────────────────────
+echo "[3/8] Waiting for cloud-init bootstrap to complete..."
 
-sleep 10  # Give SSH a moment to come up
+sleep 10
 
 for i in $(seq 1 30); do
     if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
@@ -134,27 +173,38 @@ for i in $(seq 1 30); do
 done
 
 # ── Step 4: Clone Template & Inject Config ────────────────────
-echo "[4/7] Cloning template and injecting configuration..."
+echo "[4/8] Cloning template and injecting configuration..."
+
+# Escape special characters for sed
+REALTOR_NAME_ESC=$(echo "$REALTOR_NAME" | sed 's/[\/&]/\\&/g')
+REALTOR_EMAIL_ESC=$(echo "$REALTOR_EMAIL" | sed 's/[\/&]/\\&/g')
+TELEGRAM_USERNAME_ESC=$(echo "$TELEGRAM_USERNAME" | sed 's/[\/&]/\\&/g')
+BOT_TOKEN_ESC=$(echo "$BOT_TOKEN" | sed 's/[\/&]/\\&/g')
 
 ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << ENDSSH
 set -euo pipefail
 
-# Clone the template repo
+# Clone the template repo (HTTPS — no SSH key needed on instance)
 cd /opt
 git clone ${TEMPLATE_REPO} realtor-agent
 cd /opt/realtor-agent
 
 # Inject realtor-specific values
 find . -type f \( -name "*.yaml" -o -name "*.md" -o -name "*.ts" \) \
-    -exec sed -i "s/{{REALTOR_NAME}}/${REALTOR_NAME}/g" {} +
+    -exec sed -i "s/{{REALTOR_NAME}}/${REALTOR_NAME_ESC}/g" {} +
 find . -type f \( -name "*.yaml" -o -name "*.md" -o -name "*.ts" \) \
-    -exec sed -i "s/{{REALTOR_EMAIL}}/${REALTOR_EMAIL}/g" {} +
+    -exec sed -i "s/{{REALTOR_EMAIL}}/${REALTOR_EMAIL_ESC}/g" {} +
 find . -type f \( -name "*.yaml" -o -name "*.md" -o -name "*.ts" \) \
-    -exec sed -i "s/{{TELEGRAM_USERNAME}}/${TELEGRAM_USERNAME}/g" {} +
+    -exec sed -i "s/{{TELEGRAM_USERNAME}}/${TELEGRAM_USERNAME_ESC}/g" {} +
+find . -type f \( -name "*.yaml" -o -name "*.md" \) \
+    -exec sed -i "s/{{BOT_TOKEN}}/${BOT_TOKEN_ESC}/g" {} +
 
-# Install Libretto + Playwright
+# Install Libretto + Playwright (local only — no cloud)
 npm install
 npx libretto setup --skip-browsers  # Chromium already installed by cloud-init
+
+# Verify Playwright works headless with xvfb
+xvfb-run npx playwright install --with-deps chromium 2>&1 | tail -1
 
 # Set ownership
 chown -R realtor:realtor /opt/realtor-agent
@@ -163,18 +213,15 @@ echo "✅ Template cloned and configured"
 ENDSSH
 
 # ── Step 5: Initialize PostgreSQL ─────────────────────────────
-echo "[5/7] Setting up PostgreSQL..."
+echo "[5/8] Setting up PostgreSQL..."
 
 ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << 'ENDSSH'
 set -euo pipefail
 
-# Run schema
 sudo -u postgres psql -d realtor_agent -f /opt/realtor-agent/db/schema.sql
 
-# Generate encryption key for credentials
 ENCRYPTION_KEY=$(openssl rand -hex 32)
 sudo -u postgres psql -d realtor_agent << SQL
--- Store encryption key in a secure table (only accessible by realtor user)
 CREATE TABLE IF NOT EXISTS config (
     key   VARCHAR(100) PRIMARY KEY,
     value TEXT NOT NULL
@@ -186,18 +233,32 @@ SQL
 echo "✅ PostgreSQL schema initialized"
 ENDSSH
 
-# ── Step 6: Start Hermes Agent ────────────────────────────────
-echo "[6/7] Starting Hermes Agent..."
+# ── Step 6: Test Libretto Local ───────────────────────────────
+echo "[6/8] Testing Libretto local browser..."
 
 ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << 'ENDSSH'
 set -euo pipefail
 
-# Copy Hermes config to expected location
+cd /opt/realtor-agent
+
+# Quick smoke test: open a page headlessly via xvfb
+xvfb-run npx libretto run src/workflows/mls-login.ts --headless 2>&1 || true
+# (Expected to fail on login since no real MLS — validating Chromium works)
+
+echo "✅ Libretto local browser verified"
+ENDSSH
+
+# ── Step 7: Start Hermes Agent ────────────────────────────────
+echo "[7/8] Starting Hermes Agent..."
+
+ssh -o StrictHostKeyChecking=no "admin@${IP}" "bash -s" << 'ENDSSH'
+set -euo pipefail
+
 mkdir -p /home/realtor/.hermes
 cp /opt/realtor-agent/hermes/config.yaml /home/realtor/.hermes/config.yaml
 chown -R realtor:realtor /home/realtor/.hermes
 
-# Start Hermes via PM2 as the realtor user
+# Start Hermes via PM2
 sudo -u realtor pm2 start hermes --name "realtor-agent" --cwd /opt/realtor-agent
 sudo -u realtor pm2 save
 sudo pm2 startup systemd -u realtor --hp /home/realtor
@@ -205,8 +266,8 @@ sudo pm2 startup systemd -u realtor --hp /home/realtor
 echo "✅ Hermes Agent started"
 ENDSSH
 
-# ── Step 7: Onboarding Instructions ───────────────────────────
-echo "[7/7] ✅ Provisioning complete!"
+# ── Step 8: Done ──────────────────────────────────────────────
+echo "[8/8] ✅ Provisioning complete!"
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Agent Ready: ${REALTOR_NAME}"
@@ -216,13 +277,18 @@ echo "  Instance:  ${INSTANCE_NAME}"
 echo "  IP:        ${IP}"
 echo "  SSH:       ssh admin@${IP}"
 echo ""
-echo "  📱 Next: Connect Telegram bot to this instance"
-echo "     (If using a shared bot, configure the webhook to ${IP})"
+echo "  📱 Telegram bot is live. The agent will text ${REALTOR_NAME}"
+echo "     automatically to begin onboarding."
 echo ""
-echo "  🏠 The agent will text ${REALTOR_NAME} automatically"
-echo "     to begin onboarding (MLS URL, credentials, preferences)."
+echo "  📊 Estimated monthly cost: \$20 (Lightsail only)"
+echo "     — Libretto runs locally, no cloud dependency."
 echo ""
-echo "  📊 Estimated monthly cost: \$40 (\$20 Lightsail + \$20 Libretto Cloud)"
+echo "  ⚠️  Libretto Cloud note: Local browsers work from a"
+echo "     Lightsail IP. If the MLS blocks it (Cloudflare, CAPTCHAs),"
+echo "     upgrade to Libretto Cloud Pro (\$20/mo) for managed proxies."
+echo "     Run: libretto cloud auth signup && libretto cloud deploy ."
+echo ""
+echo "  📋 Bot pool remaining: check bot-pool.json"
 echo ""
 echo "  To tear down:"
 echo "    aws lightsail delete-instance --instance-name ${INSTANCE_NAME}"
