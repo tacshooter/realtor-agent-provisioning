@@ -87,8 +87,14 @@ with open('$POOL_FILE', 'w') as f:
 
 echo "       ✅ Bot token assigned (${#BOT_TOKEN} chars)"
 
-# Generate a clean slug from the name
-SLUG=$(echo "$REALTOR_NAME" | tr '[:upper:] ' '[:lower:]' | tr -cd '[:alnum:]-')
+# Generate a clean slug from the name (use python3 to avoid Unicode issues)
+SLUG=$(python3 -c "
+import re, sys
+name = sys.argv[1]
+slug = name.lower().replace(' ', '-')
+slug = re.sub(r'[^a-z0-9-]', '', slug)
+print(slug)
+" "$REALTOR_NAME")
 INSTANCE_NAME="realtor-${SLUG}"
 
 echo "═══════════════════════════════════════════════════════════════"

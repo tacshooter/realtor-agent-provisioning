@@ -3,9 +3,10 @@
   "_how_to_create": "Message @BotFather on Telegram, send /newbot, follow prompts. Paste the token below.",
   "_available": "Currently available (not yet assigned)",
   "_in_use": "Currently assigned to a realtor instance",
-
-  "available": [],
+  "available": [
+    "8969657114:AAHnG7vJRnFJPiW4fWtVHhTJiE9sW_5H78w",
+    "8969657114:AAHnG7vJRnFJPiW4fWtVHhTJiE9sW_5H78w"
+  ],
   "in_use": {},
-
   "_instructions": "To add a bot: 1) Chat with @BotFather on Telegram 2) Send /newbot 3) Give it a name like 'Jane Doe Realtor Assistant' 4) Give it a username like @JaneDoeRealtorBot 5) Copy the token and add it to the 'available' array above. To assign: move the token from 'available' to 'in_use' with the realtor's name as key."
 }
